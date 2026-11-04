@@ -419,6 +419,7 @@ class CommonSubtreeElimination : public mlir::PassWrapper<CommonSubtreeEliminati
       mlir::OpBuilder builder(duplicate);
       llvm::SmallVector<mlir::Attribute> renamingAttrs;
       llvm::DenseSet<const tuples::Column*> processed;
+      llvm::DenseSet<const tuples::Column*> uncompensated;
 
       for (const auto& [key, dDef] : allDupDefs) {
          auto dPtrWrapper = dDef.getColumnPtr();
@@ -467,7 +468,33 @@ class CommonSubtreeElimination : public mlir::PassWrapper<CommonSubtreeEliminati
                      builder.getArrayAttr({lRef}));
                   renamingAttrs.push_back(newDef);
                }
+            } else {
+               uncompensated.insert(dPtr);
             }
+         } else {
+            uncompensated.insert(dPtr);
+         }
+      }
+
+      // A duplicate column WITHOUT a compensation entry dangles if anything downstream still
+      // references it (layered renames over a shared subtree, TPC-DS q14a/b: the consumer-side
+      // rename's def could not be mapped onto the leader and was silently dropped, leaving the
+      // join's hash attr pointing at a column nobody defines). Only eliminate the duplicate if
+      // every uncompensated column is genuinely unused downstream.
+      if (!uncompensated.empty()) {
+         llvm::DenseSet<const tuples::Column*> usedDownstream;
+         llvm::SmallVector<mlir::Operation*> worklist(duplicate->getUsers().begin(), duplicate->getUsers().end());
+         llvm::SmallPtrSet<mlir::Operation*, 16> seen;
+         while (!worklist.empty()) {
+            auto* user = worklist.pop_back_val();
+            if (!seen.insert(user).second) continue;
+            if (auto op = mlir::dyn_cast<Operator>(user)) {
+               for (const auto* c : op.getUsedColumns()) usedDownstream.insert(c);
+            }
+            for (auto* uu : user->getUsers()) worklist.push_back(uu);
+         }
+         for (const auto* c : uncompensated) {
+            if (usedDownstream.count(c)) return; // keep the duplicate: elimination would dangle refs
          }
       }
 
