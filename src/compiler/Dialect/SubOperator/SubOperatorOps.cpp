@@ -1144,6 +1144,11 @@ void mapResults(mlir::IRMapping& mapping, mlir::Operation* from, mlir::Operation
    for (auto i = 0ul; i < from->getNumResults(); i++) {
       mapping.map(from->getResult(i), to->getResult(i));
    }
+   for (auto attr : from->getDiscardableAttrs()) {
+      if (!to->hasAttr(attr.getName())) {
+         to->setDiscardableAttr(attr.getName(), attr.getValue());
+      }
+   }
 }
 } // namespace
 mlir::Operation* subop::LockOp::cloneSubOp(mlir::OpBuilder& builder, mlir::IRMapping& mapping, subop::ColumnMapping& columnMapping) {
