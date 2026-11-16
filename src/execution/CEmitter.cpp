@@ -497,7 +497,16 @@ LogicalResult printOperation(CppEmitter& emitter, util::HashCombine op) {
    return printStandardOperation(emitter, op, [&](auto& os) { os << "hash_combine(" << emitter.getOrCreateName(op.getH1()) << "," << emitter.getOrCreateName(op.getH2()) << ")"; });
 }
 LogicalResult printOperation(CppEmitter& emitter, util::HashVarLen op) {
-   return printStandardOperation(emitter, op, [&](auto& os) { os << "hashVarLenData(" << emitter.getOrCreateName(op.getVal()) << ")"; });
+   return printStandardOperation(emitter, op, [&](auto& os) {
+      if (emitter.shouldLeaveFunctionsUnresolved()) {
+         // standalone code is linked against the runtime and can call it by name
+         os << "hashVarLenData(" << emitter.getOrCreateName(op.getVal()) << ")";
+      } else {
+         // the dlopen'ed module cannot rely on the host binary exporting the symbol: call it through its address,
+         // like any other runtime function
+         os << "((uint64_t(*)(runtime::VarLen32))" << emitter.resolveFunction("hashVarLenData") << ")(" << emitter.getOrCreateName(op.getVal()) << ")";
+      }
+   });
 }
 LogicalResult printOperation(CppEmitter& emitter, util::PtrTagMatches op) {
    return printStandardOperation(emitter, op, [&](auto& os) { os << "runtime::matchesTag(" << emitter.getOrCreateName(op.getRef()) << "," << emitter.getOrCreateName(op.getHash()) << ")"; });
