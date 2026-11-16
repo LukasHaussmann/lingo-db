@@ -42,8 +42,27 @@ jobs:
       - name: Install dependencies with Homebrew
         run: |
           brew update
-          brew install ccache cmake ninja llvm@20 catch2 lit bzip2 libffi libedit libxml2 brotli zlib apache-arrow boost flex bison
-          brew link --force ccache cmake ninja llvm@20 catch2 lit bzip2 libffi libedit libxml2 brotli zlib apache-arrow boost flex bison
+          brew install ccache cmake ninja llvm@20 catch2 lit bzip2 libffi libedit libxml2 brotli zlib boost flex bison
+          brew link --force ccache cmake ninja llvm@20 catch2 lit bzip2 libffi libedit libxml2 brotli zlib boost flex bison
+          # Homebrew only ships the latest Arrow; its headers must not shadow the Arrow 24 built below.
+          brew uninstall --ignore-dependencies apache-arrow || true
+
+      - name: Cache Arrow
+        id: cache-arrow
+        uses: actions/cache@v4
+        with:
+          path: ~/arrow-install
+          key: macos-15-arrow-24.0.0-static
+
+      - name: Build Arrow 24.0.0
+        if: steps.cache-arrow.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSLO https://archive.apache.org/dist/arrow/arrow-24.0.0/apache-arrow-24.0.0.tar.gz
+          tar -xf apache-arrow-24.0.0.tar.gz
+          cmake -G Ninja -S apache-arrow-24.0.0/cpp -B arrow-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/arrow-install -DARROW_DEPENDENCY_SOURCE=BUNDLED -DARROW_BUILD_STATIC=ON -DARROW_BUILD_SHARED=OFF -DARROW_CSV=ON -DARROW_COMPUTE=ON -DCMAKE_PREFIX_PATH=/opt/homebrew/ -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang++
+          cmake --build arrow-build
+          cmake --install arrow-build
+          rm -rf arrow-build apache-arrow-24.0.0 apache-arrow-24.0.0.tar.gz
 
       - name: Build
         env:
@@ -53,6 +72,7 @@ jobs:
           CMAKE_PREFIX_PATH: "/opt/homebrew/"
           ENABLE_MIMALLOC: "OFF"
         run: |
+          export Arrow_ROOT=$HOME/arrow-install ArrowCompute_ROOT=$HOME/arrow-install
           mkdir -p ~/.ccache
           make clean
           make build-${{ matrix.build_type }}
