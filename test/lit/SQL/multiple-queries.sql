@@ -1,0 +1,5 @@
+--// Executes several queries in one process. Backends that load each compiled query as a shared library must not
+--// execute a previously loaded query instead of the current one.
+--// RUN: env LINGODB_EXECUTION_MODE=DEFAULT sqlite-tester %S/Inputs/multiple-queries.test
+--// RUN: env LINGODB_EXECUTION_MODE=DEBUGGING sqlite-tester %S/Inputs/multiple-queries.test
+--// RUN: env LINGODB_EXECUTION_MODE=C sqlite-tester %S/Inputs/multiple-queries.test

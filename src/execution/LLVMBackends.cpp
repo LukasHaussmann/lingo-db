@@ -46,6 +46,7 @@
 #include <csignal>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <regex>
 
 #include <dlfcn.h>
@@ -599,7 +600,12 @@ static void executeCmd(const std::string& cmd, execution::Error& error) {
    }
 }
 
-static void linkStatic(LLVMBackend* engine, execution::Error& error, execution::mainFnType& mainFunc) {
+// Owns the dlopen'ed query library. Every query is linked to the same file name, and dlopen returns the already
+// loaded library for a path that is still open: the library must be closed after the query ran, otherwise the next
+// query in the same process would execute this query's code.
+using StaticLibraryHandle = std::unique_ptr<void, decltype(&dlclose)>;
+
+static StaticLibraryHandle linkStatic(LLVMBackend* engine, execution::Error& error, execution::mainFnType& mainFunc) {
    auto currPath = std::filesystem::current_path();
    std::ofstream symbolStubFile("symbol_stubs.s");
    util::FunctionHelper::visitAllFunctions([&](std::string s, void* ptr) {
@@ -627,20 +633,19 @@ static void linkStatic(LLVMBackend* engine, execution::Error& error, execution::
    std::string linkCmd = staticLinker.getValue() + " -shared -fPIC llvm-jit-static.o symbol_stubs.o -o llvm-jit-static.so";
    executeCmd(linkCmd, error);
 
-   void* handle = dlopen(std::string(currPath.string() + "/llvm-jit-static.so").c_str(), RTLD_LAZY);
+   StaticLibraryHandle handle(dlopen(std::string(currPath.string() + "/llvm-jit-static.so").c_str(), RTLD_LAZY), &dlclose);
    const char* dlsymError = dlerror();
    if (dlsymError) {
       error.emit() << "Can not open static library: " << std::string(dlsymError);
-      return;
+      return StaticLibraryHandle(nullptr, &dlclose);
    }
-   mainFunc = reinterpret_cast<execution::mainFnType>(dlsym(handle, "main"));
+   mainFunc = reinterpret_cast<execution::mainFnType>(dlsym(handle.get(), "main"));
    dlsymError = dlerror();
    if (dlsymError) {
-      dlclose(handle);
       error.emit() << "Could not load symbol for main function: " << std::string(dlsymError);
-      return;
+      return StaticLibraryHandle(nullptr, &dlclose);
    }
-   return;
+   return handle;
 }
 #if GPU_ENABLED == 1
 static bool lowerToLLVMWithGPU(mlir::ModuleOp& moduleOp, bool verify) {
@@ -971,7 +976,7 @@ class CPULLVMDebugBackend : public execution::ExecutionBackend {
       }
 
       execution::mainFnType mainFunc;
-      linkStatic(engine.get(), error, mainFunc);
+      auto staticLibrary = linkStatic(engine.get(), error, mainFunc);
       if (error) {
          return;
       }
@@ -1060,7 +1065,7 @@ class CPULLVMProfilingBackend : public execution::ExecutionBackend {
       }
 
       execution::mainFnType mainFunc;
-      linkStatic(engine.get(), error, mainFunc);
+      auto staticLibrary = linkStatic(engine.get(), error, mainFunc);
       if (error) {
          return;
       }

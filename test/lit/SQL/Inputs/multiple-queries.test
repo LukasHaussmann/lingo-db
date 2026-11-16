@@ -1,0 +1,15 @@
+query tsv nosort
+select 1
+----
+1
+
+query tsv nosort
+select 2
+----
+2
+
+query tsv nosort
+select 'a string literal of the third query'
+----
+a string literal of the third query
+
